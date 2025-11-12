@@ -58,23 +58,46 @@ After authentication setup, use the platform-specific runner:
 ### 1. Production Migration with Dual-Tenant Authentication
 ```powershell
 # Windows PowerShell - Full production migration
-.\run-migration-docker-auth.ps1 \
+.\run-migration-docker-auth.ps1 `
+  --project-endpoint "https://source-project.services.ai.azure.com/api/projects/p-3" `
+  --use-v2-api `
+  --source-tenant "72f988bf-86f1-41af-91ab-2d7cd011db47" `
+  --production-resource "nextgen-eastus" `
+  --production-subscription "b1615458-c1ea-49bc-8526-cafc948d3c25" `
+  --production-tenant "33e577a9-b1b8-4126-87c0-673f197bf624" `
+  asst_abc123def456
+
+# Linux/macOS - Same command structure
+./run-migration-docker-auth.sh \
   --project-endpoint "https://source-project.services.ai.azure.com/api/projects/p-3" \
   --use-v2-api \
   --source-tenant "72f988bf-86f1-41af-91ab-2d7cd011db47" \
   --production-resource "nextgen-eastus" \
   --production-subscription "b1615458-c1ea-49bc-8526-cafc948d3c25" \
   --production-tenant "33e577a9-b1b8-4126-87c0-673f197bf624" \
-  --add-test-computer assistant_id
+  asst_abc123def456
 ```
 
-### 2. Migrate from Cosmos DB to v2 API
+### 2. Migrate Using Project Connection String (Beta)
+```bash
+# Connection string format: region.api.azureml.ms;subscription-id;resource-group;project-name
+./run-migration.sh \
+  --project-connection-string "eastus.api.azureml.ms;abc-123;my-rg;my-project" \
+  --use-v2-api \
+  asst_abc123def456
+
+# Windows PowerShell
+.\run-migration-docker-auth.ps1 `
+  --project-connection-string "eastus.api.azureml.ms;abc-123;my-rg;my-project" `
+  --use-v2-api `
+  asst_abc123def456
+```
+> **Note**: Connection string support requires `azure-ai-projects==1.0.0b10` (beta). The script automatically detects and installs the correct version.
+
+### 3. Migrate from Project Endpoint to v2 API
 ```bash
 # Using project endpoint
 ./run-migration.sh --project-endpoint "https://your-project.cognitiveservices.azure.com" --use-v2-api assistant-id
-
-# Using connection string
-./run-migration.sh --project-connection-string "your-connection-string" --use-v2-api assistant-id
 ```
 
 ### 2. Migrate from v1 API to Cosmos DB
@@ -99,6 +122,9 @@ PROJECT_ENDPOINT_URL=https://your-project.cognitiveservices.azure.com
 PROJECT_CONNECTION_STRING=your-connection-string
 
 # Cosmos DB Configuration (optional)
+# Use either COSMOS_CONNECTION_STRING (recommended) or individual parameters
+COSMOS_CONNECTION_STRING=AccountEndpoint=https://...;AccountKey=...;
+# OR (legacy - still supported)
 COSMOS_DB_CONNECTION_STRING=your-cosmos-connection-string
 COSMOS_DB_DATABASE_NAME=your-database
 COSMOS_DB_CONTAINER_NAME=your-container
@@ -153,7 +179,45 @@ AZURE_PROJECT_NAME=your-project-name
 - `--cosmos-database DATABASE` - Cosmos database name
 - `--cosmos-container CONTAINER` - Cosmos container name
 
-## 🐳 Docker Architecture
+## � Unsupported Classic Assistant Features
+
+The migration tool will **continue migration** for classic assistants (v1) that use features not supported in new agents (v2), but will **skip the unsupported tools** and display warnings:
+
+### Connected Agent Tool
+```
+⚠️  WARNING: Your classic agent includes connected agents, which aren't supported in the new experience.
+ℹ️  These connected agents won't be carried over when you create the new agent.
+💡 To orchestrate multiple agents, use a workflow instead.
+📋 Unsupported tools that will be skipped: connected_agent
+```
+**What happens**: The connected_agent tool is skipped during migration. The new agent is created successfully without this tool.
+
+**Recommendation**: Use **new agent workflows** to connect multiple agents together.
+
+### Event Binding Tool
+```
+⚠️  WARNING: Your classic agent uses 'event_binding' which isn't supported in the new experience.
+ℹ️  This tool won't be carried over when you create the new agent.
+📋 Unsupported tools that will be skipped: event_binding
+```
+**What happens**: The event_binding tool is skipped during migration. The new agent is created successfully without this tool.
+
+**Recommendation**: This feature has no direct equivalent in new agents.
+
+### Output Binding Tool
+```
+⚠️  WARNING: Your classic agent uses 'output_binding' which isn't supported in the new experience.
+ℹ️  This tool won't be carried over when you create the new agent.
+💡 Consider using 'capture_structured_outputs' in your new agent instead.
+📋 Unsupported tools that will be skipped: output_binding
+```
+**What happens**: The output_binding tool is skipped during migration. The new agent is created successfully without this tool.
+
+**Recommendation**: Use **`capture_structured_outputs`** in new agents for structured output capture.
+
+> **Note**: Migration completes successfully even when unsupported tools are present. Only the unsupported tools are excluded from the new agent. All other tools and properties are migrated normally.
+
+## �🐳 Docker Architecture
 
 ### Container Features
 - **Base Image**: Python 3.11-slim with Azure CLI
@@ -162,14 +226,26 @@ AZURE_PROJECT_NAME=your-project-name
 - **Network**: Host networking for localhost API access
 - **Environment**: Comprehensive environment variable support
 
+### Dynamic Package Installation
+The container automatically installs the correct `azure-ai-projects` package version based on your usage:
+
+- **Standard version (1.0.0)**: Used for project endpoints and most scenarios
+- **Beta version (1.0.0b10)**: Automatically installed when using `--project-connection-string`
+  - Required for `from_connection_string()` method support
+  - Detection and installation happens at container startup
+  - No manual intervention needed
+
+The script detects connection string usage and sets the `NEED_BETA_VERSION` flag automatically.
+
 ### Dual-Tenant Authentication
-The `run-migration-docker-auth.ps1` script provides advanced production migration capabilities:
+The `run-migration-docker-auth.ps1` and `run-migration-docker-auth.sh` scripts provide advanced production migration capabilities:
 
 - **Source Tenant Authentication**: Reads assistants from source tenant (e.g., Microsoft tenant)
 - **Production Tenant Authentication**: Writes agents to production tenant
 - **Automatic Token Management**: Generates and manages separate tokens for each tenant
 - **Seamless Tenant Switching**: Handles Azure CLI tenant switching automatically
 - **Token Isolation**: Source and production tokens are isolated for security
+- **Cross-Platform Support**: Both PowerShell (Windows) and Bash (Linux/macOS) versions
 
 ### Security Considerations
 - Non-root container execution
@@ -279,13 +355,25 @@ endpoint=https://...;subscriptionid=...;resourcegroupname=...;projectname=...
    ```
    **Solution**: Run `az login` or use the setup script
 
-3. **Dual-Tenant Authentication Issues**
+3. **Unsupported Tool Types**
+   ```
+   WARNING: Your classic agent includes connected agents...
+   ```
+   **Solution**: Migration will continue but unsupported tools will be skipped. See the "Unsupported Classic Assistant Features" section above for details and alternatives
+
+4. **Connection String Format**
+   ```
+   Failed to parse connection string
+   ```
+   **Solution**: Use format `region.api.azureml.ms;subscription-id;resource-group;project-name`
+
+5. **Dual-Tenant Authentication Issues**
    ```
    Token tenant does not match resource tenant
    ```
    **Solution**: Ensure correct source and production tenant IDs are specified
 
-4. **Agent Name Case Sensitivity**
+6. **Agent Name Case Sensitivity**
    ```
    400 Bad Request on production endpoint
    ```

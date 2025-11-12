@@ -905,9 +905,10 @@ def v1_assistant_to_v2_agent(v1_assistant: Dict[str, Any], agent_name: Optional[
     if not isinstance(v1_tools, list):
         v1_tools = []
     
-    # Check for unsupported tool types
+    # Check for unsupported tool types and log warnings
     assistant_id = v1_assistant.get("id", "unknown")
     assistant_name = v1_assistant.get("name", "unknown")
+    unsupported_tools = []
     
     for tool in v1_tools:
         if not isinstance(tool, dict):
@@ -916,23 +917,22 @@ def v1_assistant_to_v2_agent(v1_assistant: Dict[str, Any], agent_name: Optional[
         tool_type = tool.get("type")
         
         if tool_type == "connected_agent":
-            raise ValueError(
-                f"❌ Migration failed for classic assistant '{assistant_name}' (ID: {assistant_id})\n"
-                f"   This classic assistant uses 'connected_agent' tool which is not supported in new agents.\n"
-                f"   Please use new agent workflows instead.\n"
-                f"   See documentation: https://learn.microsoft.com/azure/ai-services/agents/workflows"
-            )
+            unsupported_tools.append(tool_type)
+            print(f"   ⚠️  WARNING: Your classic agent includes connected agents, which aren't supported in the new experience.")
+            print(f"   ℹ️  These connected agents won't be carried over when you create the new agent.")
+            print(f"   💡 To orchestrate multiple agents, use a workflow instead.")
         elif tool_type == "event_binding":
-            raise ValueError(
-                f"❌ Migration failed for classic assistant '{assistant_name}' (ID: {assistant_id})\n"
-                f"   This classic assistant uses 'event_binding' tool which is not supported in new agents."
-            )
+            unsupported_tools.append(tool_type)
+            print(f"   ⚠️  WARNING: Your classic agent uses 'event_binding' which isn't supported in the new experience.")
+            print(f"   ℹ️  This tool won't be carried over when you create the new agent.")
         elif tool_type == "output_binding":
-            raise ValueError(
-                f"❌ Migration failed for classic assistant '{assistant_name}' (ID: {assistant_id})\n"
-                f"   This classic assistant uses 'output_binding' tool which is not supported in new agents.\n"
-                f"   Please update your agent to use 'capture_structured_outputs' instead."
-            )
+            unsupported_tools.append(tool_type)
+            print(f"   ⚠️  WARNING: Your classic agent uses 'output_binding' which isn't supported in the new experience.")
+            print(f"   ℹ️  This tool won't be carried over when you create the new agent.")
+            print(f"   💡 Consider using 'capture_structured_outputs' in your new agent instead.")
+    
+    if unsupported_tools:
+        print(f"   📋 Unsupported tools that will be skipped: {', '.join(unsupported_tools)}")
     
     # Derive agent name if not provided
     if not agent_name:
@@ -1019,6 +1019,11 @@ def v1_assistant_to_v2_agent(v1_assistant: Dict[str, Any], agent_name: Optional[
         
         if isinstance(tool, dict):
             tool_type = tool.get("type")
+            
+            # Skip unsupported tools
+            if tool_type in ["connected_agent", "event_binding", "output_binding"]:
+                print(f"     ⏭️  Skipping unsupported tool type: {tool_type}")
+                continue
             transformed_tool = {"type": tool_type}
             
             # Handle file_search tool
