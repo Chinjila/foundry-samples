@@ -1,6 +1,6 @@
-import asyncio
 import os
 import logging
+import asyncio
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
@@ -11,18 +11,16 @@ from langgraph.graph import (
     MessagesState,
     StateGraph,
 )
-from typing_extensions import Literal
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-from azure.ai.agentserver.core.client.tools.aio import AzureAIToolClient
-from azure.ai.agentserver.langgraph import ToolClient, from_langgraph
-
+from azure.ai.agentserver.langgraph import from_langgraph
 from azure.monitor.opentelemetry import configure_azure_monitor
 from langchain.agents import create_agent
+from langgraph.graph.state import CompiledStateGraph
+from langchain_core.tools import StructuredTool
 
 
-
-from typing import Literal
+from typing import Literal, List
 
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import MessagesState, END
@@ -52,47 +50,6 @@ except Exception:
     raise
 
 
-async def get_tools_from_mcp():
-        # Get configuration from environment
-    project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-    tool_connection_id = os.getenv("AZURE_AI_PROJECT_TOOL_CONNECTION_ID")
-
-    if not project_endpoint:
-        raise ValueError(
-            "AZURE_AI_PROJECT_ENDPOINT environment variable is required. "
-            "Set it to your Azure AI project endpoint, e.g., "
-             "https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
-        )
-
-    print(f"Using project endpoint: {project_endpoint}, tool connection ID: {tool_connection_id}")
-    # Create Azure credentials
-    credential = DefaultAzureCredential()
-    tool_definitions = [
-        {
-            "type": "mcp",
-            "project_connection_id": tool_connection_id,
-        },
-    ]
-    # Create the AzureAIToolClient
-    # This client supports both MCP tools and Azure AI Tools API
-    tool_client = AzureAIToolClient(
-        endpoint=project_endpoint,
-        credential=credential,
-        tools=tool_definitions
-    )
-
-    # Create the ToolClient
-    client = ToolClient(tool_client)
-
-    # List all available tools and convert to LangChain format
-    print("Fetching tools from Azure AI Tool Client...")
-    tools = await client.list_tools()
-    print(f"Found {len(tools)} tools:")
-    for tool in tools:
-        print(f"  - {tool.name}: {tool.description}")
-    return tools
-
-
 # Define tools
 def make_system_prompt(suffix: str) -> str:
     return (
@@ -117,40 +74,10 @@ def get_next_node(last_message: BaseMessage, goto: str):
         return END
     return goto
 
-
-tools = asyncio.run(get_tools_from_mcp())
-# Research agent and node
-research_agent = create_agent(
-    llm,
-    tools=tools, # TODO: use a tool
-    system_prompt=make_system_prompt(
-        "You can only do research. You are working with a word count agent colleague."
-    ),
-)
-
-
-def research_node(
-    state: MessagesState,
-) -> Command[Literal["word_counter", END]]:
-    result = research_agent.invoke(state)
-    goto = get_next_node(result["messages"][-1], "word_counter")
-    # wrap in a human message, as not all providers allow
-    # AI message at the last position of the input messages list
-    result["messages"][-1] = HumanMessage(
-        content=result["messages"][-1].content, name="researcher"
-    )
-    return Command(
-        update={
-            # share internal message history of research agent with other agents
-            "messages": result["messages"],
-        },
-        goto=goto,
-    )
-
 # word count agent and node
 word_count_agent = create_agent(
     llm,
-    [word_count_tool], # TODO: use a tool
+    [word_count_tool],
     system_prompt=make_system_prompt(
         "You can only count words in a string. You are working with a researcher colleague."
     ),
@@ -173,9 +100,41 @@ def word_count_node(state: MessagesState) -> Command[Literal["researcher", END]]
         goto=goto,
     )
 
+def build_researcher_node(tools):
+    async def research_node(
+        state: MessagesState,
+    ) -> Command[Literal["word_counter", END]]:
+        # Research agent and node
+        research_agent = create_agent(
+            llm,
+            tools=tools,
+            system_prompt=make_system_prompt(
+                "You can only do research. You are working with a word count agent colleague."
+            ),
+        )
+        
+        result = await research_agent.ainvoke(state)
+        goto = get_next_node(result["messages"][-1], "word_counter")
+        # wrap in a human message, as not all providers allow
+        # AI message at the last position of the input messages list
+        result["messages"][-1] = HumanMessage(
+            content=result["messages"][-1].content, name="researcher"
+        )
+        return Command(
+            update={
+                # share internal message history of research agent with other agents
+                "messages": result["messages"],
+            },
+            goto=goto,
+        )
+    
+    return research_node
+
 
 # Build workflow
-def build_agent() -> "StateGraph":
+def build_agent(tools) -> "StateGraph":
+    research_node = build_researcher_node(tools)
+
     workflow = StateGraph(MessagesState)
     workflow.add_node("researcher", research_node)
     workflow.add_node("word_counter", word_count_node)
@@ -186,12 +145,64 @@ def build_agent() -> "StateGraph":
     return workflow.compile()
 
 
+def create_graph_factory():
+    """Create a factory function that builds a graph with ToolClient.
+    
+    This function returns a factory that takes a ToolClient and returns
+    a CompiledStateGraph. The graph is created at runtime for every request,
+    allowing it to access the latest tool configuration dynamically.
+    """
+
+    async def graph_factory(tools: List[StructuredTool]) -> CompiledStateGraph:
+        print("\nCreating LangGraph agent with tools from factory...")
+        agent = build_agent(tools)
+        print("Agent created successfully!")
+        return agent
+    
+    return graph_factory
+
+
+async def quickstart():
+    """Build and return a LangGraphAdapter using a graph factory function."""
+    
+    # Get configuration from environment
+    project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+    
+    if not project_endpoint:
+        raise ValueError(
+            "AZURE_AI_PROJECT_ENDPOINT environment variable is required. "
+            "Set it to your Azure AI project endpoint, e.g., "
+            "https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
+        )
+    
+    # Create Azure credentials
+    credential = DefaultAzureCredential()
+    
+    # Create a factory function that will build the graph at runtime
+    # The factory will receive a ToolClient when the agent first runs
+    graph_factory = create_graph_factory()
+    
+    # tools defined in the project
+    tool_connection_id = os.getenv("AZURE_AI_PROJECT_TOOL_CONNECTION_ID")
+    tools = [{"type": "mcp", "project_connection_id": tool_connection_id}]
+
+    adapter = from_langgraph(graph_factory, credentials=credential, tools=tools)
+
+    print("Adapter created! Graph will be built on every request.")
+    return adapter
+
+
+async def main():  # pragma: no cover - sample entrypoint
+    """Main function to run the agent."""
+    adapter = await quickstart()
+    
+    if adapter:
+        print("\nStarting agent server...")
+        print("The graph factory will be called for every request that arrives.")
+        await adapter.run_async()
+
+
+
 # Build workflow and run agent
 if __name__ == "__main__":
-    try:
-        agent = build_agent()
-        adapter = from_langgraph(agent)
-        adapter.run()
-    except Exception:
-        logger.exception("Multi-Agent encountered an error while running")
-        raise
+    asyncio.run(main())
