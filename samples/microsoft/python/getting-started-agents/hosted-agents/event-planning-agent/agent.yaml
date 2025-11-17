@@ -14,7 +14,7 @@ metadata:
   authors:
     - JC-386
 template:
-  name: McpAgent
+  name: EventPlanningAgent
   kind: hosted
   environment_variables:
     - name: AZURE_AI_PROJECT_ENDPOINT
