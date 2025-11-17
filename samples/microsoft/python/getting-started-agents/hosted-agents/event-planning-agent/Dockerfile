@@ -34,7 +34,7 @@ COPY . /app
 RUN uv sync --frozen --no-dev
 
 # Temporarily install to resolve confliction
-RUN uv pip install --force-reinstall /app/azure_ai_agentserver_agentframework-1.0.0b4-py3-none-any.whl
+RUN uv pip install --force-reinstall /app/azure_ai_agentserver_agentframework-1.0.0b5-py3-none-any.whl
 RUN uv pip install azure-ai-projects==2.0.0b1 agent-framework-core==1.0.0b251111 agent-framework-azure-ai==1.0.0b251111
 
 # Final runtime stage - use slim Python image

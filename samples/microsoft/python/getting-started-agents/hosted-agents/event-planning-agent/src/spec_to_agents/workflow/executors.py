@@ -4,12 +4,12 @@
 
 import json
 from datetime import datetime
-from typing import List
+from typing import Any, List
 
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
-    ChatAgent,
+    BaseContent, ChatAgent,
     ChatMessage,
     Executor,
     FunctionCallContent,
@@ -66,7 +66,7 @@ def convert_tool_content_to_text(messages: list[ChatMessage]) -> list[ChatMessag
             elif isinstance(content, FunctionResultContent):
                 # Convert function result to descriptive text
                 if content.result is not None:
-                    result_str = content.result if isinstance(content.result, str) else json.dumps(content.result)
+                    result_str = _to_function_output(content.result)
                     text_repr = f"[Tool Result for call {content.call_id}: {result_str}]"
                 elif content.exception is not None:
                     text_repr = f"[Tool Error for call {content.call_id}: {content.exception}]"
@@ -87,6 +87,21 @@ def convert_tool_content_to_text(messages: list[ChatMessage]) -> list[ChatMessag
             )
         )
     return converted_messages
+
+
+def _to_function_output(result: Any) -> str:
+    if isinstance(result, str):
+        return result
+    elif isinstance(result, list):
+        text = []
+        for item in result:
+            if isinstance(item, BaseContent):
+                text.append(item.to_dict())
+            else:
+                text.append(str(item))
+        return json.dumps(text)
+    else:
+        return ""
 
 
 class EventPlanningCoordinator(Executor):
