@@ -5,13 +5,13 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "16387439036059823108"
+      "templateHash": "7504975286451014433"
     }
   },
   "parameters": {
     "location": {
       "type": "string",
-      "defaultValue": "westus",
+      "defaultValue": "eastus",
       "allowedValues": [
         "australiaeast",
         "canadaeast",
@@ -108,7 +108,7 @@
     },
     "aiSearchResourceId": {
       "type": "string",
-      "defaultValue": "/subscriptions/921496dc-987f-410f-bd57-426eb2611356/resourceGroups/rg-amanda/providers/Microsoft.Search/searchServices/rbassearch",
+      "defaultValue": "",
       "metadata": {
         "description": "The AI Search Service full ARM Resource ID. This is an optional field, and if not provided, the resource will be created."
       }

@@ -27,7 +27,7 @@
   'southcentralus'
 ])
 @description('The Azure region where your AI Foundry resource and project will be created.')
-param location string = 'westus'
+param location string = 'eastus'
 
 @maxLength(9)
 @description('The name of the Azure AI Foundry resource.')
@@ -60,7 +60,7 @@ param modelCapacity int = 1
 
 // Optionally bring existing resources
 @description('The AI Search Service full ARM Resource ID. This is an optional field, and if not provided, the resource will be created.')
-param aiSearchResourceId string = '/subscriptions/921496dc-987f-410f-bd57-426eb2611356/resourceGroups/rg-amanda/providers/Microsoft.Search/searchServices/rbassearch'
+param aiSearchResourceId string = ''
 
 @description('The AI Storage Account full ARM Resource ID. This is an optional field, and if not provided, the resource will be created.')
 param azureStorageAccountResourceId string = ''
